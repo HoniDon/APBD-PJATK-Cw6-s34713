@@ -260,4 +260,90 @@ public class AppointmentService
             Status = reader.GetString(reader.GetOrdinal("Status"))
         };
     }
+    
+    public async Task<(bool Success, string? ErrorMessage, bool NotFound)> UpdateAppointmentAsync(int idAppointment, UpdateAppointmentRequestDto dto)
+{
+    var allowedStatuses = new[] { "Scheduled", "Completed", "Cancelled" };
+
+    if (!allowedStatuses.Contains(dto.Status))
+    {
+        return (false, "Invalid status value.", false);
+    }
+
+    if (string.IsNullOrWhiteSpace(dto.Reason))
+    {
+        return (false, "Reason is required.", false);
+    }
+
+    if (dto.Reason.Length > 250)
+    {
+        return (false, "Reason cannot be longer than 250 characters.", false);
+    }
+
+    await using var connection = new SqlConnection(_connectionString);
+    await connection.OpenAsync();
+
+    await using (var checkCommand = new SqlCommand("""
+        SELECT IdAppointment, Status
+        FROM dbo.Appointments
+        WHERE IdAppointment = @IdAppointment;
+        """, connection))
+    {
+        checkCommand.Parameters.Add("@IdAppointment", SqlDbType.Int).Value = idAppointment;
+
+        await using var reader = await checkCommand.ExecuteReaderAsync();
+
+        if (!await reader.ReadAsync())
+        {
+            return (false, "Appointment not found.", true);
+        }
+
+        var currentStatus = reader.GetString(reader.GetOrdinal("Status"));
+
+        if (currentStatus == "Completed" && dto.AppointmentDate != default)
+        {
+            return (false, "Completed appointment cannot change the date.", false);
+        }
+    }
+
+    if (!await PatientExistsAndIsActiveAsync(connection, dto.IdPatient))
+    {
+        return (false, "Patient does not exist or is not active.", false);
+    }
+
+    if (!await DoctorExistsAndIsActiveAsync(connection, dto.IdDoctor))
+    {
+        return (false, "Doctor does not exist or is not active.", false);
+    }
+
+    if (await DoctorHasConflictAsync(connection, dto.IdDoctor, dto.AppointmentDate, idAppointment))
+    {
+        return (false, "Doctor already has an appointment at this time.", false);
+    }
+
+    await using var updateCommand = new SqlCommand("""
+        UPDATE dbo.Appointments
+        SET
+            IdPatient = @IdPatient,
+            IdDoctor = @IdDoctor,
+            AppointmentDate = @AppointmentDate,
+            Status = @Status,
+            Reason = @Reason,
+            InternalNotes = @InternalNotes
+        WHERE IdAppointment = @IdAppointment;
+        """, connection);
+
+    updateCommand.Parameters.Add("@IdAppointment", SqlDbType.Int).Value = idAppointment;
+    updateCommand.Parameters.Add("@IdPatient", SqlDbType.Int).Value = dto.IdPatient;
+    updateCommand.Parameters.Add("@IdDoctor", SqlDbType.Int).Value = dto.IdDoctor;
+    updateCommand.Parameters.Add("@AppointmentDate", SqlDbType.DateTime2).Value = dto.AppointmentDate;
+    updateCommand.Parameters.Add("@Status", SqlDbType.NVarChar, 50).Value = dto.Status;
+    updateCommand.Parameters.Add("@Reason", SqlDbType.NVarChar, 250).Value = dto.Reason;
+    updateCommand.Parameters.Add("@InternalNotes", SqlDbType.NVarChar, -1).Value =
+        string.IsNullOrWhiteSpace(dto.InternalNotes) ? DBNull.Value : dto.InternalNotes;
+
+    await updateCommand.ExecuteNonQueryAsync();
+
+    return (true, null, false);
+}
 }
