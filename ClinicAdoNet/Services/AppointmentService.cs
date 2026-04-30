@@ -180,4 +180,56 @@ public class AppointmentService
         var count = (int)await command.ExecuteScalarAsync();
         return count > 0;
     }
+    
+    public async Task<(bool Success, string? ErrorMessage, int? NewId)> CreateAppointmentAsync(CreateAppointmentRequestDto dto)
+    {
+        if (dto.AppointmentDate < DateTime.Now)
+        {
+            return (false, "Appointment date cannot be in the past.", null);
+        }
+
+        if (string.IsNullOrWhiteSpace(dto.Reason))
+        {
+            return (false, "Reason is required.", null);
+        }
+
+        if (dto.Reason.Length > 250)
+        {
+            return (false, "Reason cannot be longer than 250 characters.", null);
+        }
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+
+        if (!await PatientExistsAndIsActiveAsync(connection, dto.IdPatient))
+        {
+            return (false, "Patient does not exist or is not active.", null);
+        }
+
+        if (!await DoctorExistsAndIsActiveAsync(connection, dto.IdDoctor))
+        {
+            return (false, "Doctor does not exist or is not active.", null);
+        }
+
+        if (await DoctorHasConflictAsync(connection, dto.IdDoctor, dto.AppointmentDate))
+        {
+            return (false, "Doctor already has an appointment at this time.", null);
+        }
+
+        await using var command = new SqlCommand("""
+                                                 INSERT INTO dbo.Appointments (IdPatient, IdDoctor, AppointmentDate, Status, Reason, CreatedAt)
+                                                 OUTPUT INSERTED.IdAppointment
+                                                 VALUES (@IdPatient, @IdDoctor, @AppointmentDate, @Status, @Reason, SYSUTCDATETIME());
+                                                 """, connection);
+
+        command.Parameters.Add("@IdPatient", SqlDbType.Int).Value = dto.IdPatient;
+        command.Parameters.Add("@IdDoctor", SqlDbType.Int).Value = dto.IdDoctor;
+        command.Parameters.Add("@AppointmentDate", SqlDbType.DateTime2).Value = dto.AppointmentDate;
+        command.Parameters.Add("@Status", SqlDbType.NVarChar, 50).Value = "Scheduled";
+        command.Parameters.Add("@Reason", SqlDbType.NVarChar, 250).Value = dto.Reason;
+
+        var newId = (int)await command.ExecuteScalarAsync();
+
+        return (true, null, newId);
+    }
 }
