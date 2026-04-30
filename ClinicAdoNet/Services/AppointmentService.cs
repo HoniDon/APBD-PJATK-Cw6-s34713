@@ -232,4 +232,32 @@ public class AppointmentService
 
         return (true, null, newId);
     }
+    
+    private async Task<AppointmentDetailsDto?> GetAppointmentForUpdateAsync(SqlConnection connection, int idAppointment)
+    {
+        await using var command = new SqlCommand("""
+                                                 SELECT
+                                                     a.IdAppointment,
+                                                     a.AppointmentDate,
+                                                     a.Status
+                                                 FROM dbo.Appointments a
+                                                 WHERE a.IdAppointment = @IdAppointment;
+                                                 """, connection);
+
+        command.Parameters.Add("@IdAppointment", SqlDbType.Int).Value = idAppointment;
+
+        await using var reader = await command.ExecuteReaderAsync();
+
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new AppointmentDetailsDto
+        {
+            IdAppointment = reader.GetInt32(reader.GetOrdinal("IdAppointment")),
+            AppointmentDate = reader.GetDateTime(reader.GetOrdinal("AppointmentDate")),
+            Status = reader.GetString(reader.GetOrdinal("Status"))
+        };
+    }
 }
