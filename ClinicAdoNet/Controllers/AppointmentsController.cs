@@ -59,4 +59,27 @@ public class AppointmentsController : ControllerBase
             new { idAppointment = result.NewId }
         );
     }
+    
+    [HttpPut("{idAppointment}")]
+    public async Task<IActionResult> UpdateAppointment([FromRoute] int idAppointment, [FromBody] UpdateAppointmentRequestDto dto)
+    {
+        var result = await _appointmentService.UpdateAppointmentAsync(idAppointment, dto);
+
+        if (result.NotFound)
+        {
+            return NotFound(new ErrorResponseDto { Message = result.ErrorMessage! });
+        }
+
+        if (!result.Success)
+        {
+            if (result.ErrorMessage == "Doctor already has an appointment at this time.")
+            {
+                return Conflict(new ErrorResponseDto { Message = result.ErrorMessage! });
+            }
+
+            return BadRequest(new ErrorResponseDto { Message = result.ErrorMessage! });
+        }
+
+        return Ok();
+    }
 }
